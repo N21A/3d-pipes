@@ -8,6 +8,8 @@ namespace ThreeDPipesScreensaver
     {
         private const int MaximumRunLength = 7;
         private const double DissolveDurationSeconds = 1.55;
+        private const double PipeSpawnIntervalSeconds = 5.0;
+        private const double GrowthSpeedMultiplier = 1.75;
 
         private readonly ScreensaverSettings settings;
         private readonly Random random;
@@ -22,9 +24,13 @@ namespace ThreeDPipesScreensaver
         private double dissolveElapsed;
         private double sceneAge;
         private double sceneLifetime;
+        private double nextPipeSpawnAt;
+        private int pipesStartedThisScene;
+        private int maximumPipesThisScene;
 
         public const float PipeRadius = 0.30f;
-        public const float ElbowCentreRadius = 0.56f;
+        public const float JointRadius = PipeRadius * 1.18f;
+        public const float ElbowCentreRadius = 0.0f;
 
         public PipeWorld(ScreensaverSettings loadedSettings)
         {
@@ -34,8 +40,8 @@ namespace ThreeDPipesScreensaver
             occupied = new HashSet<GridPoint>();
             segments = new List<PipeSegment>(settings.MaxSegments / 2 + 32);
             elbows = new List<PipeElbow>(settings.MaxSegments / 4 + 16);
-            caps = new List<PipeCap>(settings.PipeCount * 8);
-            runners = new List<PipeRunner>(settings.PipeCount);
+            caps = new List<PipeCap>(32);
+            runners = new List<PipeRunner>(16);
             directions = new[]
             {
                 new GridPoint(1, 0, 0),
@@ -59,7 +65,7 @@ namespace ThreeDPipesScreensaver
             HalfY = 8;
             HalfX = 17;
             HalfZ = 8;
-            CameraDistance = 24.0f;
+            CameraDistance = 20.5f;
             ResetScene();
         }
 
@@ -90,7 +96,7 @@ namespace ThreeDPipesScreensaver
 
             HalfX = desiredHalfX;
             HalfZ = 8;
-            CameraDistance = 24.0f;
+            CameraDistance = 20.5f;
 
             if (meaningfulChange && segments.Count > 0)
             {
@@ -120,7 +126,9 @@ namespace ThreeDPipesScreensaver
             }
 
             sceneAge += deltaSeconds;
-            double distanceAdvance = deltaSeconds * 1000.0 / Math.Max(45, settings.GrowthDurationMs);
+            double distanceAdvance = deltaSeconds * 1000.0 /
+                                     Math.Max(35, settings.GrowthDurationMs) *
+                                     GrowthSpeedMultiplier;
 
             for (int i = runners.Count - 1; i >= 0; i--)
             {
@@ -128,7 +136,7 @@ namespace ThreeDPipesScreensaver
                 runner.Progress += distanceAdvance;
 
                 int safety = 0;
-                while (runner.Progress >= runner.RunLength && safety++ < 8)
+                while (runner.Progress >= runner.RunLength && safety++ < 12)
                 {
                     double carryDistance = runner.Progress - runner.RunLength;
                     CompleteCurrentRun(runner);
@@ -147,18 +155,24 @@ namespace ThreeDPipesScreensaver
                 }
             }
 
-            while (runners.Count < settings.PipeCount && occupied.Count < settings.MaxSegments)
+            if (sceneAge >= nextPipeSpawnAt &&
+                pipesStartedThisScene < maximumPipesThisScene &&
+                occupied.Count < settings.MaxSegments)
             {
-                PipeRunner replacement = CreateRunner();
-                if (replacement == null)
+                PipeRunner additionalPipe = CreateRunner();
+                if (additionalPipe != null)
                 {
-                    break;
+                    runners.Add(additionalPipe);
+                    pipesStartedThisScene++;
                 }
-                runners.Add(replacement);
+                nextPipeSpawnAt += PipeSpawnIntervalSeconds;
             }
 
+            bool allScheduledPipesFinished =
+                pipesStartedThisScene >= maximumPipesThisScene && runners.Count == 0;
+
             if (occupied.Count >= settings.MaxSegments ||
-                runners.Count == 0 ||
+                allScheduledPipesFinished ||
                 sceneAge >= sceneLifetime)
             {
                 StartDissolve();
@@ -192,7 +206,7 @@ namespace ThreeDPipesScreensaver
                     runner.Position,
                     runner.Destination,
                     runner.ColourIndex,
-                    runner.PendingStartTrim,
+                    0.0f,
                     0.0f));
                 runner.PreviousSegmentIndex = segments.Count - 1;
             }
@@ -249,22 +263,12 @@ namespace ThreeDPipesScreensaver
                                     !chosen.Direction.Equals(runner.Direction);
             if (changedDirection)
             {
-                if (runner.PreviousSegmentIndex >= 0 &&
-                    runner.PreviousSegmentIndex < segments.Count)
-                {
-                    segments[runner.PreviousSegmentIndex].EndTrim = ElbowCentreRadius;
-                }
-
+                // The original effect pops a compact spherical joint into place at each turn.
                 elbows.Add(new PipeElbow(
                     runner.Position,
                     runner.Direction,
                     chosen.Direction,
                     runner.ColourIndex));
-                runner.PendingStartTrim = ElbowCentreRadius;
-            }
-            else
-            {
-                runner.PendingStartTrim = 0.0f;
             }
 
             int runLength = ChooseRunLength(chosen.MaximumLength, !changedDirection);
@@ -272,6 +276,7 @@ namespace ThreeDPipesScreensaver
             runner.RunLength = runLength;
             runner.Destination = runner.Position + chosen.Direction * runLength;
             runner.Progress = 0.0;
+            runner.PendingStartTrim = 0.0f;
 
             for (int step = 1; step <= runLength; step++)
             {
@@ -294,7 +299,7 @@ namespace ThreeDPipesScreensaver
                 }
                 else
                 {
-                    double planeWeight = option.Direction.Z == 0 ? 1.0 : 0.62;
+                    double planeWeight = option.Direction.Z == 0 ? 1.0 : 0.72;
                     double spaceWeight = 0.70 + Math.Min(1.0, option.MaximumLength / 5.0);
                     option.Weight = planeWeight * spaceWeight;
                 }
@@ -366,7 +371,7 @@ namespace ThreeDPipesScreensaver
 
         private PipeRunner CreateRunner()
         {
-            for (int attempt = 0; attempt < 260; attempt++)
+            for (int attempt = 0; attempt < 300; attempt++)
             {
                 GridPoint start = new GridPoint(
                     random.Next(-HalfX, HalfX + 1),
@@ -381,7 +386,7 @@ namespace ThreeDPipesScreensaver
                 PipeRunner runner = new PipeRunner(
                     start,
                     random.Next(Colours.Length),
-                    0.66 + random.NextDouble() * 0.16);
+                    0.62 + random.NextDouble() * 0.18);
 
                 occupied.Add(start);
                 if (BeginNextRun(runner))
@@ -424,27 +429,41 @@ namespace ThreeDPipesScreensaver
             DissolveProgress = 0.0f;
             DissolveSeed = random.Next();
             sceneAge = 0.0;
-            sceneLifetime = 20.0 + random.NextDouble() * 8.0;
+            nextPipeSpawnAt = PipeSpawnIntervalSeconds;
 
-            // Mostly head-on, with a mild fixed angle for depth. The camera never rotates mid-scene.
-            if (random.NextDouble() < 0.72)
+            int initialPipeCount = random.Next(2, 6);
+            maximumPipesThisScene = Math.Min(
+                16,
+                Math.Max(
+                    initialPipeCount + random.Next(4, 8),
+                    settings.PipeCount));
+
+            pipesStartedThisScene = 0;
+            sceneLifetime = Math.Max(
+                34.0,
+                (maximumPipesThisScene - initialPipeCount) * PipeSpawnIntervalSeconds +
+                16.0 + random.NextDouble() * 8.0);
+
+            // Most scenes are nearly head-on. Depth comes from the Z positions and perspective camera.
+            if (random.NextDouble() < 0.78)
             {
-                FixedYawDegrees = (float)(-5.0 + random.NextDouble() * 10.0);
-                FixedPitchDegrees = (float)(-4.5 + random.NextDouble() * 4.0);
+                FixedYawDegrees = (float)(-3.0 + random.NextDouble() * 6.0);
+                FixedPitchDegrees = (float)(-3.0 + random.NextDouble() * 3.0);
             }
             else
             {
-                FixedYawDegrees = (float)(10.0 + random.NextDouble() * 6.0) *
+                FixedYawDegrees = (float)(7.0 + random.NextDouble() * 6.0) *
                                   (random.Next(2) == 0 ? -1.0f : 1.0f);
-                FixedPitchDegrees = (float)(-5.0 - random.NextDouble() * 3.0);
+                FixedPitchDegrees = (float)(-3.0 - random.NextDouble() * 4.0);
             }
 
-            for (int i = 0; i < settings.PipeCount; i++)
+            for (int i = 0; i < initialPipeCount; i++)
             {
                 PipeRunner runner = CreateRunner();
                 if (runner != null)
                 {
                     runners.Add(runner);
+                    pipesStartedThisScene++;
                 }
             }
         }

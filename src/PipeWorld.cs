@@ -6,6 +6,9 @@ namespace ThreeDPipesScreensaver
 {
     internal sealed class PipeWorld
     {
+        private const int MaximumRunLength = 7;
+        private const double DissolveDurationSeconds = 1.55;
+
         private readonly ScreensaverSettings settings;
         private readonly Random random;
         private readonly HashSet<GridPoint> occupied;
@@ -14,13 +17,14 @@ namespace ThreeDPipesScreensaver
         private readonly List<PipeElbow> elbows;
         private readonly List<PipeCap> caps;
         private readonly List<PipeRunner> runners;
-        private double resetTimer;
-        private double fadeTimer;
-        private int lastWidth;
-        private int lastHeight;
 
-        public const float PipeRadius = 0.215f;
-        public const float ElbowCentreRadius = 0.43f;
+        private bool dissolving;
+        private double dissolveElapsed;
+        private double sceneAge;
+        private double sceneLifetime;
+
+        public const float PipeRadius = 0.30f;
+        public const float ElbowCentreRadius = 0.56f;
 
         public PipeWorld(ScreensaverSettings loadedSettings)
         {
@@ -28,8 +32,8 @@ namespace ThreeDPipesScreensaver
             int seed = unchecked(Environment.TickCount * 397) ^ Guid.NewGuid().GetHashCode();
             random = new Random(seed);
             occupied = new HashSet<GridPoint>();
-            segments = new List<PipeSegment>(settings.MaxSegments + 16);
-            elbows = new List<PipeElbow>(settings.MaxSegments / 3);
+            segments = new List<PipeSegment>(settings.MaxSegments / 2 + 32);
+            elbows = new List<PipeElbow>(settings.MaxSegments / 4 + 16);
             caps = new List<PipeCap>(settings.PipeCount * 8);
             runners = new List<PipeRunner>(settings.PipeCount);
             directions = new[]
@@ -44,18 +48,18 @@ namespace ThreeDPipesScreensaver
 
             Colours = new[]
             {
-                Color.FromArgb(105, 225, 220),
-                Color.FromArgb(238, 42, 30),
-                Color.FromArgb(202, 205, 210),
-                Color.FromArgb(70, 190, 95),
-                Color.FromArgb(232, 194, 56)
+                Color.FromArgb(72, 184, 178),
+                Color.FromArgb(205, 55, 43),
+                Color.FromArgb(190, 194, 201),
+                Color.FromArgb(47, 157, 91),
+                Color.FromArgb(58, 108, 188),
+                Color.FromArgb(213, 169, 52)
             };
 
-            HalfY = 10;
-            HalfX = 18;
-            HalfZ = 12;
-            FixedYawDegrees = 16.0f;
-            FixedPitchDegrees = -7.0f;
+            HalfY = 8;
+            HalfX = 17;
+            HalfZ = 8;
+            CameraDistance = 24.0f;
             ResetScene();
         }
 
@@ -67,9 +71,11 @@ namespace ThreeDPipesScreensaver
         public int HalfX { get; private set; }
         public int HalfY { get; private set; }
         public int HalfZ { get; private set; }
+        public float CameraDistance { get; private set; }
         public float FixedYawDegrees { get; private set; }
         public float FixedPitchDegrees { get; private set; }
-        public float FadeAlpha { get; private set; }
+        public float DissolveProgress { get; private set; }
+        public int DissolveSeed { get; private set; }
 
         public void Resize(int width, int height)
         {
@@ -79,13 +85,12 @@ namespace ThreeDPipesScreensaver
             }
 
             double aspect = width / (double)height;
-            int desiredHalfX = Math.Max(13, (int)Math.Ceiling(HalfY * aspect * 1.36));
+            int desiredHalfX = Math.Max(12, (int)Math.Ceiling(HalfY * aspect * 1.22));
             bool meaningfulChange = Math.Abs(desiredHalfX - HalfX) >= 2;
 
             HalfX = desiredHalfX;
-            HalfZ = 12;
-            lastWidth = width;
-            lastHeight = height;
+            HalfZ = 8;
+            CameraDistance = 24.0f;
 
             if (meaningfulChange && segments.Count > 0)
             {
@@ -100,40 +105,49 @@ namespace ThreeDPipesScreensaver
                 return;
             }
 
-            if (resetTimer > 0.0)
+            if (dissolving)
             {
-                resetTimer -= deltaSeconds;
-                fadeTimer += deltaSeconds;
-                FadeAlpha = (float)Math.Max(0.0, Math.Min(1.0, fadeTimer / 0.75));
-                if (resetTimer <= 0.0)
+                dissolveElapsed += deltaSeconds;
+                DissolveProgress = (float)Math.Max(
+                    0.0,
+                    Math.Min(1.0, dissolveElapsed / DissolveDurationSeconds));
+
+                if (DissolveProgress >= 1.0f)
                 {
                     ResetScene();
                 }
                 return;
             }
 
-            double advance = deltaSeconds * 1000.0 / Math.Max(1, settings.GrowthDurationMs);
+            sceneAge += deltaSeconds;
+            double distanceAdvance = deltaSeconds * 1000.0 / Math.Max(45, settings.GrowthDurationMs);
+
             for (int i = runners.Count - 1; i >= 0; i--)
             {
                 PipeRunner runner = runners[i];
-                runner.Progress += advance;
+                runner.Progress += distanceAdvance;
 
                 int safety = 0;
-                while (runner.Progress >= 1.0 && safety++ < 8)
+                while (runner.Progress >= runner.RunLength && safety++ < 8)
                 {
-                    runner.Progress -= 1.0;
-                    CompleteCurrentSegment(runner);
+                    double carryDistance = runner.Progress - runner.RunLength;
+                    CompleteCurrentRun(runner);
 
-                    if (segments.Count >= settings.MaxSegments || !BeginNextSegment(runner))
+                    if (occupied.Count >= settings.MaxSegments || !BeginNextRun(runner))
                     {
-                        caps.Add(new PipeCap(runner.Position, runner.ColourIndex));
+                        caps.Add(new PipeCap(
+                            runner.Position,
+                            runner.Direction,
+                            runner.ColourIndex));
                         runners.RemoveAt(i);
                         break;
                     }
+
+                    runner.Progress = carryDistance;
                 }
             }
 
-            while (runners.Count < settings.PipeCount && segments.Count < settings.MaxSegments)
+            while (runners.Count < settings.PipeCount && occupied.Count < settings.MaxSegments)
             {
                 PipeRunner replacement = CreateRunner();
                 if (replacement == null)
@@ -143,35 +157,56 @@ namespace ThreeDPipesScreensaver
                 runners.Add(replacement);
             }
 
-            if (segments.Count >= settings.MaxSegments || runners.Count == 0)
+            if (occupied.Count >= settings.MaxSegments ||
+                runners.Count == 0 ||
+                sceneAge >= sceneLifetime)
             {
-                resetTimer = 1.65;
-                fadeTimer = 0.0;
-                FadeAlpha = 0.0f;
+                StartDissolve();
             }
         }
 
-        private void CompleteCurrentSegment(PipeRunner runner)
+        private void CompleteCurrentRun(PipeRunner runner)
         {
-            PipeSegment segment = new PipeSegment(
-                runner.Position,
-                runner.Destination,
-                runner.ColourIndex,
-                runner.PendingStartTrim,
-                0.0f);
+            bool continuesStraight = runner.HasDirection &&
+                                     runner.Direction.Equals(runner.PendingDirection) &&
+                                     runner.PreviousSegmentIndex >= 0 &&
+                                     runner.PreviousSegmentIndex < segments.Count;
 
-            segments.Add(segment);
-            runner.PreviousSegmentIndex = segments.Count - 1;
+            if (continuesStraight)
+            {
+                PipeSegment previous = segments[runner.PreviousSegmentIndex];
+                if (previous.End.Equals(runner.Position))
+                {
+                    previous.End = runner.Destination;
+                    previous.EndTrim = 0.0f;
+                }
+                else
+                {
+                    continuesStraight = false;
+                }
+            }
+
+            if (!continuesStraight)
+            {
+                segments.Add(new PipeSegment(
+                    runner.Position,
+                    runner.Destination,
+                    runner.ColourIndex,
+                    runner.PendingStartTrim,
+                    0.0f));
+                runner.PreviousSegmentIndex = segments.Count - 1;
+            }
+
             runner.Position = runner.Destination;
             runner.Direction = runner.PendingDirection;
             runner.HasDirection = true;
             runner.PendingStartTrim = 0.0f;
         }
 
-        private bool BeginNextSegment(PipeRunner runner)
+        private bool BeginNextRun(PipeRunner runner)
         {
-            List<int> valid = new List<int>(6);
-            int straightIndex = -1;
+            List<DirectionOption> options = new List<DirectionOption>(6);
+            DirectionOption straightOption = null;
 
             for (int i = 0; i < directions.Length; i++)
             {
@@ -181,50 +216,41 @@ namespace ThreeDPipesScreensaver
                     continue;
                 }
 
-                GridPoint destination = runner.Position + direction;
-                if (!Inside(destination) || occupied.Contains(destination))
+                int maximumLength = GetMaximumFreeRun(runner.Position, direction);
+                if (maximumLength <= 0)
                 {
                     continue;
                 }
 
-                valid.Add(i);
+                DirectionOption option = new DirectionOption(direction, maximumLength);
+                options.Add(option);
                 if (runner.HasDirection && direction.Equals(runner.Direction))
                 {
-                    straightIndex = i;
+                    straightOption = option;
                 }
             }
 
-            if (valid.Count == 0)
+            if (options.Count == 0)
             {
                 return false;
             }
 
-            int chosenIndex;
-            if (straightIndex >= 0 && random.NextDouble() < runner.StraightChance)
+            DirectionOption chosen;
+            if (straightOption != null && random.NextDouble() < runner.StraightChance)
             {
-                chosenIndex = straightIndex;
+                chosen = straightOption;
             }
             else
             {
-                List<int> turnChoices = new List<int>(valid.Count);
-                for (int i = 0; i < valid.Count; i++)
-                {
-                    if (valid[i] != straightIndex)
-                    {
-                        turnChoices.Add(valid[i]);
-                    }
-                }
-
-                chosenIndex = turnChoices.Count > 0
-                    ? turnChoices[random.Next(turnChoices.Count)]
-                    : valid[random.Next(valid.Count)];
+                chosen = ChooseTurnOption(options, straightOption);
             }
 
-            GridPoint chosenDirection = directions[chosenIndex];
-            bool changedDirection = runner.HasDirection && !chosenDirection.Equals(runner.Direction);
+            bool changedDirection = runner.HasDirection &&
+                                    !chosen.Direction.Equals(runner.Direction);
             if (changedDirection)
             {
-                if (runner.PreviousSegmentIndex >= 0 && runner.PreviousSegmentIndex < segments.Count)
+                if (runner.PreviousSegmentIndex >= 0 &&
+                    runner.PreviousSegmentIndex < segments.Count)
                 {
                     segments[runner.PreviousSegmentIndex].EndTrim = ElbowCentreRadius;
                 }
@@ -232,7 +258,7 @@ namespace ThreeDPipesScreensaver
                 elbows.Add(new PipeElbow(
                     runner.Position,
                     runner.Direction,
-                    chosenDirection,
+                    chosen.Direction,
                     runner.ColourIndex));
                 runner.PendingStartTrim = ElbowCentreRadius;
             }
@@ -241,16 +267,106 @@ namespace ThreeDPipesScreensaver
                 runner.PendingStartTrim = 0.0f;
             }
 
-            runner.PendingDirection = chosenDirection;
-            runner.Destination = runner.Position + chosenDirection;
+            int runLength = ChooseRunLength(chosen.MaximumLength, !changedDirection);
+            runner.PendingDirection = chosen.Direction;
+            runner.RunLength = runLength;
+            runner.Destination = runner.Position + chosen.Direction * runLength;
             runner.Progress = 0.0;
-            occupied.Add(runner.Destination);
+
+            for (int step = 1; step <= runLength; step++)
+            {
+                occupied.Add(runner.Position + chosen.Direction * step);
+            }
             return true;
+        }
+
+        private DirectionOption ChooseTurnOption(
+            List<DirectionOption> options,
+            DirectionOption straightOption)
+        {
+            double totalWeight = 0.0;
+            for (int i = 0; i < options.Count; i++)
+            {
+                DirectionOption option = options[i];
+                if (ReferenceEquals(option, straightOption) && options.Count > 1)
+                {
+                    option.Weight = 0.12;
+                }
+                else
+                {
+                    double planeWeight = option.Direction.Z == 0 ? 1.0 : 0.62;
+                    double spaceWeight = 0.70 + Math.Min(1.0, option.MaximumLength / 5.0);
+                    option.Weight = planeWeight * spaceWeight;
+                }
+                totalWeight += option.Weight;
+            }
+
+            double selection = random.NextDouble() * totalWeight;
+            for (int i = 0; i < options.Count; i++)
+            {
+                selection -= options[i].Weight;
+                if (selection <= 0.0)
+                {
+                    return options[i];
+                }
+            }
+            return options[options.Count - 1];
+        }
+
+        private int ChooseRunLength(int maximumLength, bool continuingStraight)
+        {
+            double roll = random.NextDouble();
+            int desired;
+            if (roll < 0.07)
+            {
+                desired = 1;
+            }
+            else if (roll < 0.24)
+            {
+                desired = 2;
+            }
+            else if (roll < 0.53)
+            {
+                desired = 3;
+            }
+            else if (roll < 0.78)
+            {
+                desired = 4;
+            }
+            else if (roll < 0.93)
+            {
+                desired = 5;
+            }
+            else
+            {
+                desired = 6;
+            }
+
+            if (continuingStraight && desired < maximumLength && random.NextDouble() < 0.35)
+            {
+                desired++;
+            }
+            return Math.Max(1, Math.Min(maximumLength, desired));
+        }
+
+        private int GetMaximumFreeRun(GridPoint origin, GridPoint direction)
+        {
+            int maximumLength = 0;
+            for (int length = 1; length <= MaximumRunLength; length++)
+            {
+                GridPoint point = origin + direction * length;
+                if (!Inside(point) || occupied.Contains(point))
+                {
+                    break;
+                }
+                maximumLength = length;
+            }
+            return maximumLength;
         }
 
         private PipeRunner CreateRunner()
         {
-            for (int attempt = 0; attempt < 240; attempt++)
+            for (int attempt = 0; attempt < 260; attempt++)
             {
                 GridPoint start = new GridPoint(
                     random.Next(-HalfX, HalfX + 1),
@@ -265,20 +381,34 @@ namespace ThreeDPipesScreensaver
                 PipeRunner runner = new PipeRunner(
                     start,
                     random.Next(Colours.Length),
-                    0.72 + random.NextDouble() * 0.16);
+                    0.66 + random.NextDouble() * 0.16);
 
                 occupied.Add(start);
-                caps.Add(new PipeCap(start, runner.ColourIndex));
-                if (BeginNextSegment(runner))
+                if (BeginNextRun(runner))
                 {
+                    caps.Add(new PipeCap(
+                        start,
+                        -runner.PendingDirection,
+                        runner.ColourIndex));
                     return runner;
                 }
 
                 occupied.Remove(start);
-                caps.RemoveAt(caps.Count - 1);
+            }
+            return null;
+        }
+
+        private void StartDissolve()
+        {
+            if (dissolving)
+            {
+                return;
             }
 
-            return null;
+            dissolving = true;
+            dissolveElapsed = 0.0;
+            DissolveProgress = 0.0f;
+            DissolveSeed = random.Next();
         }
 
         private void ResetScene()
@@ -288,13 +418,26 @@ namespace ThreeDPipesScreensaver
             caps.Clear();
             runners.Clear();
             occupied.Clear();
-            resetTimer = 0.0;
-            fadeTimer = 0.0;
-            FadeAlpha = 0.0f;
 
-            // The viewpoint changes only between scenes; it never rotates while a scene is running.
-            FixedYawDegrees = (float)(12.0 + random.NextDouble() * 10.0) * (random.Next(2) == 0 ? -1.0f : 1.0f);
-            FixedPitchDegrees = (float)(-5.0 - random.NextDouble() * 5.0);
+            dissolving = false;
+            dissolveElapsed = 0.0;
+            DissolveProgress = 0.0f;
+            DissolveSeed = random.Next();
+            sceneAge = 0.0;
+            sceneLifetime = 20.0 + random.NextDouble() * 8.0;
+
+            // Mostly head-on, with a mild fixed angle for depth. The camera never rotates mid-scene.
+            if (random.NextDouble() < 0.72)
+            {
+                FixedYawDegrees = (float)(-5.0 + random.NextDouble() * 10.0);
+                FixedPitchDegrees = (float)(-4.5 + random.NextDouble() * 4.0);
+            }
+            else
+            {
+                FixedYawDegrees = (float)(10.0 + random.NextDouble() * 6.0) *
+                                  (random.Next(2) == 0 ? -1.0f : 1.0f);
+                FixedPitchDegrees = (float)(-5.0 - random.NextDouble() * 3.0);
+            }
 
             for (int i = 0; i < settings.PipeCount; i++)
             {
@@ -317,6 +460,19 @@ namespace ThreeDPipesScreensaver
         {
             return a.X == -b.X && a.Y == -b.Y && a.Z == -b.Z;
         }
+
+        private sealed class DirectionOption
+        {
+            public DirectionOption(GridPoint direction, int maximumLength)
+            {
+                Direction = direction;
+                MaximumLength = maximumLength;
+            }
+
+            public readonly GridPoint Direction;
+            public readonly int MaximumLength;
+            public double Weight;
+        }
     }
 
     internal sealed class PipeRunner
@@ -330,6 +486,7 @@ namespace ThreeDPipesScreensaver
             ColourIndex = colourIndex;
             StraightChance = straightChance;
             PreviousSegmentIndex = -1;
+            RunLength = 1;
         }
 
         public GridPoint Position;
@@ -342,11 +499,17 @@ namespace ThreeDPipesScreensaver
         public double Progress;
         public float PendingStartTrim;
         public int PreviousSegmentIndex;
+        public int RunLength;
     }
 
     internal sealed class PipeSegment
     {
-        public PipeSegment(GridPoint start, GridPoint end, int colourIndex, float startTrim, float endTrim)
+        public PipeSegment(
+            GridPoint start,
+            GridPoint end,
+            int colourIndex,
+            float startTrim,
+            float endTrim)
         {
             Start = start;
             End = end;
@@ -364,7 +527,11 @@ namespace ThreeDPipesScreensaver
 
     internal sealed class PipeElbow
     {
-        public PipeElbow(GridPoint centre, GridPoint incoming, GridPoint outgoing, int colourIndex)
+        public PipeElbow(
+            GridPoint centre,
+            GridPoint incoming,
+            GridPoint outgoing,
+            int colourIndex)
         {
             Centre = centre;
             Incoming = incoming;
@@ -380,13 +547,15 @@ namespace ThreeDPipesScreensaver
 
     internal sealed class PipeCap
     {
-        public PipeCap(GridPoint position, int colourIndex)
+        public PipeCap(GridPoint position, GridPoint outwardDirection, int colourIndex)
         {
             Position = position;
+            OutwardDirection = outwardDirection;
             ColourIndex = colourIndex;
         }
 
         public GridPoint Position;
+        public GridPoint OutwardDirection;
         public int ColourIndex;
     }
 
@@ -408,6 +577,16 @@ namespace ThreeDPipesScreensaver
         public static GridPoint operator +(GridPoint a, GridPoint b)
         {
             return new GridPoint(a.X + b.X, a.Y + b.Y, a.Z + b.Z);
+        }
+
+        public static GridPoint operator -(GridPoint value)
+        {
+            return new GridPoint(-value.X, -value.Y, -value.Z);
+        }
+
+        public static GridPoint operator *(GridPoint value, int scalar)
+        {
+            return new GridPoint(value.X * scalar, value.Y * scalar, value.Z * scalar);
         }
 
         public bool Equals(GridPoint other)

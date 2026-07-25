@@ -1,7 +1,11 @@
 $ErrorActionPreference = 'Stop'
 
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
-$Source = Join-Path $Root 'src\ThreeDPipes.cs'
+$Sources = @(
+    (Join-Path $Root 'src\ThreeDPipes.cs'),
+    (Join-Path $Root 'src\PipeWorld.cs'),
+    (Join-Path $Root 'src\OpenGlRenderer.cs')
+)
 $Manifest = Join-Path $Root 'app.manifest'
 $Icon = Join-Path $Root 'assets\3dpipes.ico'
 $Dist = Join-Path $Root 'dist'
@@ -25,6 +29,12 @@ if (-not $csc) {
     throw 'The built-in .NET Framework C# compiler was not found. Enable .NET Framework 4.x in Windows Features, then run this script again.'
 }
 
+foreach ($source in $Sources) {
+    if (-not (Test-Path $source)) {
+        throw "Required source file was not found: $source"
+    }
+}
+
 New-Item -ItemType Directory -Path $Dist -Force | Out-Null
 Remove-Item $Exe, $Scr -Force -ErrorAction SilentlyContinue
 
@@ -39,9 +49,8 @@ $compilerArguments = @(
     '/reference:System.dll',
     '/reference:System.Core.dll',
     '/reference:System.Drawing.dll',
-    '/reference:System.Windows.Forms.dll',
-    $Source
-)
+    '/reference:System.Windows.Forms.dll'
+) + $Sources
 
 Write-Host 'Building 3D Pipes screensaver...'
 & $csc $compilerArguments

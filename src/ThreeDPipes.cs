@@ -12,8 +12,8 @@ using Microsoft.Win32;
 [assembly: AssemblyCompany("3D Pipes")]
 [assembly: AssemblyProduct("3D Pipes Screensaver")]
 [assembly: AssemblyCopyright("Copyright 2026")]
-[assembly: AssemblyVersion("1.1.0.0")]
-[assembly: AssemblyFileVersion("1.1.0.0")]
+[assembly: AssemblyVersion("1.1.1.0")]
+[assembly: AssemblyFileVersion("1.1.1.0")]
 
 namespace ThreeDPipesScreensaver
 {
@@ -130,9 +130,9 @@ namespace ThreeDPipesScreensaver
     {
         private const string RegistryPath = @"Software\ThreeDPipesScreensaver";
 
-        public int GrowthDurationMs = 145;
-        public int PipeCount = 3;
-        public int MaxSegments = 420;
+        public int GrowthDurationMs = 120;
+        public int PipeCount = 8;
+        public int MaxSegments = 500;
         public bool KeepAwake = true;
 
         public static ScreensaverSettings Load()
@@ -147,9 +147,9 @@ namespace ThreeDPipesScreensaver
                         return settings;
                     }
 
-                    settings.GrowthDurationMs = ReadInt(key, "GrowthDurationMs", settings.GrowthDurationMs, 55, 500);
-                    settings.PipeCount = ReadInt(key, "ClassicPipeCount", settings.PipeCount, 1, 8);
-                    settings.MaxSegments = ReadInt(key, "ClassicMaxSegments", settings.MaxSegments, 120, 1000);
+                    settings.GrowthDurationMs = ReadInt(key, "GrowthDurationMs", settings.GrowthDurationMs, 50, 300);
+                    settings.PipeCount = ReadInt(key, "ClassicPipeCount", settings.PipeCount, 3, 16);
+                    settings.MaxSegments = ReadInt(key, "ClassicMaxSegments", settings.MaxSegments, 120, 1200);
                     settings.KeepAwake = ReadInt(key, "KeepAwake", settings.KeepAwake ? 1 : 0, 0, 1) == 1;
                 }
             }
@@ -190,9 +190,15 @@ namespace ThreeDPipesScreensaver
 
     internal sealed class ConfigForm : Form
     {
+        private const int MinimumDurationMs = 50;
+        private const int MaximumDurationMs = 300;
+        private const int SliderTotal = MinimumDurationMs + MaximumDurationMs;
+        private const double EffectiveGrowthMultiplier = 2.05;
+
         private readonly ScreensaverSettings settings;
         private readonly TrackBar speedTrack;
         private readonly Label speedValue;
+        private readonly Label speedDetail;
         private readonly NumericUpDown pipeCount;
         private readonly NumericUpDown segmentCount;
         private readonly CheckBox keepAwake;
@@ -202,129 +208,296 @@ namespace ThreeDPipesScreensaver
             settings = ScreensaverSettings.Load();
 
             Text = "3D Pipes Screensaver Settings";
-            FormBorderStyle = FormBorderStyle.FixedDialog;
+            FormBorderStyle = FormBorderStyle.Sizable;
             MaximizeBox = false;
             MinimizeBox = false;
             ShowInTaskbar = false;
             StartPosition = FormStartPosition.CenterScreen;
-            ClientSize = new Size(535, 395);
-            Font = new Font("Segoe UI", 9F, FontStyle.Regular, GraphicsUnit.Point);
+            AutoScaleMode = AutoScaleMode.Dpi;
+            AutoScroll = true;
+            ClientSize = new Size(720, 520);
+            MinimumSize = new Size(650, 500);
+            Font = new Font("Segoe UI", 9.5F, FontStyle.Regular, GraphicsUnit.Point);
+            Padding = new Padding(24);
 
-            Label title = MakeLabel("Classic 3D Pipes", 24, 20);
-            title.Font = new Font(Font.FontFamily, 16F, FontStyle.Bold);
-            Controls.Add(title);
+            TableLayoutPanel root = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                AutoSize = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                ColumnCount = 1,
+                RowCount = 8,
+                Padding = new Padding(4)
+            };
+            root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+            root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            root.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
+            root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            Controls.Add(root);
 
-            Label description = MakeLabel(
-                "Fixed camera, smooth pipe growth and a screen-filling procedural layout.",
-                27,
-                58);
-            description.ForeColor = SystemColors.GrayText;
-            Controls.Add(description);
+            Label title = new Label
+            {
+                Text = "Classic 3D Pipes",
+                AutoSize = true,
+                Font = new Font(Font.FontFamily, 17F, FontStyle.Bold),
+                Margin = new Padding(0, 0, 0, 4)
+            };
+            root.Controls.Add(title, 0, 0);
 
-            Controls.Add(MakeLabel("Time per grid section", 28, 105));
+            Label description = new Label
+            {
+                Text = "Fixed camera, perspective depth, smooth growth and a screen-filling procedural layout.",
+                AutoSize = true,
+                ForeColor = SystemColors.GrayText,
+                Margin = new Padding(0, 0, 0, 20)
+            };
+            root.Controls.Add(description, 0, 1);
+
+            TableLayoutPanel speedPanel = CreateSettingPanel();
+            Label speedLabel = CreateSettingLabel("Pipe speed");
+            speedPanel.Controls.Add(speedLabel, 0, 0);
+
+            TableLayoutPanel speedControl = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                AutoSize = true,
+                ColumnCount = 3,
+                RowCount = 2,
+                Margin = new Padding(0)
+            };
+            speedControl.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            speedControl.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+            speedControl.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+
+            Label slower = new Label
+            {
+                Text = "Slower",
+                AutoSize = true,
+                Anchor = AnchorStyles.Left,
+                ForeColor = SystemColors.GrayText,
+                Margin = new Padding(0, 8, 8, 0)
+            };
+            speedControl.Controls.Add(slower, 0, 0);
+
             speedTrack = new TrackBar
             {
-                Minimum = 55,
-                Maximum = 500,
-                TickFrequency = 45,
-                Value = settings.GrowthDurationMs,
-                Location = new Point(178, 92),
-                Size = new Size(267, 45)
+                Minimum = MinimumDurationMs,
+                Maximum = MaximumDurationMs,
+                TickFrequency = 25,
+                SmallChange = 5,
+                LargeChange = 20,
+                Value = DurationToSlider(settings.GrowthDurationMs),
+                Dock = DockStyle.Fill,
+                AutoSize = true,
+                Margin = new Padding(0)
             };
-            speedTrack.ValueChanged += delegate { UpdateLabels(); };
-            Controls.Add(speedTrack);
+            speedTrack.ValueChanged += delegate { UpdateSpeedLabels(); };
+            speedControl.Controls.Add(speedTrack, 1, 0);
 
-            speedValue = MakeLabel(string.Empty, 451, 105);
-            speedValue.Size = new Size(65, 25);
-            Controls.Add(speedValue);
+            Label faster = new Label
+            {
+                Text = "Faster",
+                AutoSize = true,
+                Anchor = AnchorStyles.Right,
+                ForeColor = SystemColors.GrayText,
+                Margin = new Padding(8, 8, 0, 0)
+            };
+            speedControl.Controls.Add(faster, 2, 0);
 
-            Controls.Add(MakeLabel("Simultaneous pipes", 28, 158));
+            speedDetail = new Label
+            {
+                AutoSize = true,
+                ForeColor = SystemColors.GrayText,
+                Margin = new Padding(0, 0, 0, 0)
+            };
+            speedControl.Controls.Add(speedDetail, 1, 1);
+
+            speedValue = new Label
+            {
+                AutoSize = true,
+                Anchor = AnchorStyles.Right,
+                Font = new Font(Font.FontFamily, 10F, FontStyle.Bold),
+                Margin = new Padding(12, 8, 0, 0)
+            };
+            speedPanel.Controls.Add(speedControl, 1, 0);
+            speedPanel.Controls.Add(speedValue, 2, 0);
+            root.Controls.Add(speedPanel, 0, 2);
+
+            TableLayoutPanel pipePanel = CreateSettingPanel();
+            pipePanel.Controls.Add(CreateSettingLabel("Minimum pipes per scene"), 0, 0);
             pipeCount = new NumericUpDown
             {
-                Minimum = 1,
-                Maximum = 8,
-                Value = settings.PipeCount,
-                Location = new Point(181, 155),
-                Size = new Size(88, 26)
+                Minimum = 3,
+                Maximum = 16,
+                Value = Math.Max(3, Math.Min(16, settings.PipeCount)),
+                Width = 100,
+                Anchor = AnchorStyles.Left,
+                Margin = new Padding(0, 4, 0, 4)
             };
-            Controls.Add(pipeCount);
+            pipePanel.Controls.Add(pipeCount, 1, 0);
+            Label pipeHelp = new Label
+            {
+                Text = "Scenes begin with 2–5 pipes; more are added every five seconds.",
+                AutoSize = true,
+                ForeColor = SystemColors.GrayText,
+                Anchor = AnchorStyles.Left,
+                Margin = new Padding(12, 7, 0, 0)
+            };
+            pipePanel.Controls.Add(pipeHelp, 2, 0);
+            root.Controls.Add(pipePanel, 0, 3);
 
-            Controls.Add(MakeLabel("Scene density", 28, 210));
+            TableLayoutPanel densityPanel = CreateSettingPanel();
+            densityPanel.Controls.Add(CreateSettingLabel("Scene density"), 0, 0);
             segmentCount = new NumericUpDown
             {
                 Minimum = 120,
-                Maximum = 1000,
+                Maximum = 1200,
                 Increment = 40,
-                Value = settings.MaxSegments,
-                Location = new Point(181, 207),
-                Size = new Size(88, 26)
+                Value = Math.Max(120, Math.Min(1200, settings.MaxSegments)),
+                Width = 100,
+                Anchor = AnchorStyles.Left,
+                Margin = new Padding(0, 4, 0, 4)
             };
-            Controls.Add(segmentCount);
+            densityPanel.Controls.Add(segmentCount, 1, 0);
+            Label densityHelp = new Label
+            {
+                Text = "Maximum occupied grid positions before the scene dissolves.",
+                AutoSize = true,
+                ForeColor = SystemColors.GrayText,
+                Anchor = AnchorStyles.Left,
+                Margin = new Padding(12, 7, 0, 0)
+            };
+            densityPanel.Controls.Add(densityHelp, 2, 0);
+            root.Controls.Add(densityPanel, 0, 4);
 
-            Label camera = MakeLabel("Camera", 28, 261);
-            Controls.Add(camera);
-            Label cameraValue = MakeLabel("Fixed (classic mode)", 181, 261);
-            cameraValue.ForeColor = SystemColors.GrayText;
-            Controls.Add(cameraValue);
+            TableLayoutPanel cameraPanel = CreateSettingPanel();
+            cameraPanel.Controls.Add(CreateSettingLabel("Camera"), 0, 0);
+            Label cameraValue = new Label
+            {
+                Text = "Fixed with perspective depth",
+                AutoSize = true,
+                ForeColor = SystemColors.GrayText,
+                Anchor = AnchorStyles.Left,
+                Margin = new Padding(0, 7, 0, 0)
+            };
+            cameraPanel.Controls.Add(cameraValue, 1, 0);
+            root.Controls.Add(cameraPanel, 0, 5);
 
+            Panel awakePanel = new Panel
+            {
+                Dock = DockStyle.Fill,
+                AutoSize = true,
+                Margin = new Padding(0, 12, 0, 0)
+            };
             keepAwake = new CheckBox
             {
                 Text = "Keep the computer and display awake while 3D Pipes is running",
                 Checked = settings.KeepAwake,
                 AutoSize = true,
-                Location = new Point(28, 307)
+                Location = new Point(0, 0)
             };
-            Controls.Add(keepAwake);
-
-            Label sleepNote = MakeLabel(
-                "Useful while the laptop is acting as a server or uploading files.",
-                49,
-                333);
-            sleepNote.ForeColor = SystemColors.GrayText;
-            Controls.Add(sleepNote);
-
-            Button ok = new Button
+            awakePanel.Controls.Add(keepAwake);
+            Label sleepNote = new Label
             {
-                Text = "Save",
-                DialogResult = DialogResult.OK,
-                Location = new Point(347, 356),
-                Size = new Size(78, 30)
+                Text = "Useful while the laptop is acting as a server or uploading files.",
+                AutoSize = true,
+                ForeColor = SystemColors.GrayText,
+                Location = new Point(24, 29)
             };
-            ok.Click += SaveClicked;
-            Controls.Add(ok);
+            awakePanel.Controls.Add(sleepNote);
+            awakePanel.MinimumSize = new Size(0, 58);
+            root.Controls.Add(awakePanel, 0, 6);
+
+            FlowLayoutPanel buttons = new FlowLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                AutoSize = true,
+                FlowDirection = FlowDirection.RightToLeft,
+                WrapContents = false,
+                Margin = new Padding(0, 18, 0, 0)
+            };
 
             Button cancel = new Button
             {
                 Text = "Cancel",
                 DialogResult = DialogResult.Cancel,
-                Location = new Point(435, 356),
-                Size = new Size(78, 30)
+                AutoSize = true,
+                MinimumSize = new Size(92, 34),
+                Margin = new Padding(8, 0, 0, 0)
             };
-            Controls.Add(cancel);
+            buttons.Controls.Add(cancel);
 
-            AcceptButton = ok;
+            Button save = new Button
+            {
+                Text = "Save",
+                DialogResult = DialogResult.OK,
+                AutoSize = true,
+                MinimumSize = new Size(92, 34),
+                Margin = new Padding(8, 0, 0, 0)
+            };
+            save.Click += SaveClicked;
+            buttons.Controls.Add(save);
+            root.Controls.Add(buttons, 0, 7);
+
+            AcceptButton = save;
             CancelButton = cancel;
-            UpdateLabels();
+            UpdateSpeedLabels();
         }
 
-        private static Label MakeLabel(string text, int x, int y)
+        private static TableLayoutPanel CreateSettingPanel()
+        {
+            TableLayoutPanel panel = new TableLayoutPanel
+            {
+                Dock = DockStyle.Top,
+                AutoSize = true,
+                ColumnCount = 3,
+                RowCount = 1,
+                Margin = new Padding(0, 0, 0, 12)
+            };
+            panel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 185F));
+            panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+            panel.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            return panel;
+        }
+
+        private static Label CreateSettingLabel(string text)
         {
             return new Label
             {
                 Text = text,
                 AutoSize = true,
-                Location = new Point(x, y)
+                Anchor = AnchorStyles.Left,
+                Margin = new Padding(0, 7, 12, 0)
             };
         }
 
-        private void UpdateLabels()
+        private static int DurationToSlider(int durationMs)
         {
-            speedValue.Text = speedTrack.Value.ToString(CultureInfo.InvariantCulture) + " ms";
+            int clamped = Math.Max(MinimumDurationMs, Math.Min(MaximumDurationMs, durationMs));
+            return SliderTotal - clamped;
+        }
+
+        private static int SliderToDuration(int sliderValue)
+        {
+            return SliderTotal - sliderValue;
+        }
+
+        private void UpdateSpeedLabels()
+        {
+            int durationMs = SliderToDuration(speedTrack.Value);
+            double sectionsPerSecond = 1000.0 / durationMs * EffectiveGrowthMultiplier;
+            speedValue.Text = sectionsPerSecond.ToString("0.0", CultureInfo.InvariantCulture) + " sections/s";
+            speedDetail.Text = durationMs.ToString(CultureInfo.InvariantCulture) + " ms per grid section";
         }
 
         private void SaveClicked(object sender, EventArgs e)
         {
-            settings.GrowthDurationMs = speedTrack.Value;
+            settings.GrowthDurationMs = SliderToDuration(speedTrack.Value);
             settings.PipeCount = (int)pipeCount.Value;
             settings.MaxSegments = (int)segmentCount.Value;
             settings.KeepAwake = keepAwake.Checked;

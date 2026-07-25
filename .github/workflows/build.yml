@@ -1,0 +1,25 @@
+name: Build Windows screensaver
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Build .scr
+        shell: powershell
+        run: .\Build.ps1
+
+      - name: Upload screensaver
+        uses: actions/upload-artifact@v4
+        with:
+          name: 3D-Pipes-Screensaver
+          path: |
+            dist/3DPipes.scr
+            dist/3DPipes.exe

@@ -1,0 +1,11 @@
+3D PIPES SCREENSAVER - QUICK START
+
+1. Double-click Install.bat
+2. Choose your idle timeout in the Screen Saver Settings window that opens
+3. Use RunNow.bat whenever you want to start it immediately
+4. Use Preview.bat for a resizable test window
+
+The screensaver keeps the computer and display awake while it is running by default.
+Open Screen Saver Settings > Settings to change speed, pipe count, density, camera rotation, or keep-awake behaviour.
+
+No administrator access or third-party game engine is required.

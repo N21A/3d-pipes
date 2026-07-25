@@ -39,7 +39,9 @@ Press a key, click, or move the mouse to exit full-screen mode. Press **Esc** to
 
 ## Settings
 
-Open **Windows Screen Saver Settings**, select **3D Pipes**, then choose **Settings**. Available controls:
+Open **Windows Screen Saver Settings**, select **3D Pipes**, then choose **Settings**.
+
+Available controls:
 
 - Growth interval
 - Number of simultaneous pipes

@@ -13,5 +13,7 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="src\ThreeDPipes.cs" />
+    <Compile Include="src\PipeWorld.cs" />
+    <Compile Include="src\OpenGlRenderer.cs" />
   </ItemGroup>
 </Project>

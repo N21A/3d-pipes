@@ -41,7 +41,6 @@ namespace ThreeDPipesScreensaver
         private static readonly float[] Light0Ambient = { 0.10f, 0.10f, 0.10f, 1.0f };
         private static readonly float[] Light0Diffuse = { 1.00f, 0.98f, 0.95f, 1.0f };
         private static readonly float[] Light0Specular = { 1.00f, 1.00f, 1.00f, 1.0f };
-
         private static readonly float[] Light1Position = { 0.80f, -0.20f, 0.40f, 0.0f };
         private static readonly float[] Light1Ambient = { 0.02f, 0.02f, 0.02f, 1.0f };
         private static readonly float[] Light1Diffuse = { 0.24f, 0.28f, 0.34f, 1.0f };
@@ -84,7 +83,7 @@ namespace ThreeDPipesScreensaver
 
             Gl.glMatrixMode(GL_PROJECTION);
             Gl.glLoadIdentity();
-            Gl.gluPerspective(52.0, width / (double)Math.Max(1, height), 0.5, 120.0);
+            Gl.gluPerspective(58.0, width / (double)Math.Max(1, height), 0.35, 100.0);
 
             Gl.glMatrixMode(GL_MODELVIEW);
             Gl.glLoadIdentity();
@@ -116,10 +115,14 @@ namespace ThreeDPipesScreensaver
 
                 for (int i = 0; i < world.Elbows.Count; i++)
                 {
-                    PipeElbow elbow = world.Elbows[i];
-                    if (elbow.ColourIndex == colour)
+                    PipeElbow joint = world.Elbows[i];
+                    if (joint.ColourIndex == colour)
                     {
-                        DrawElbow(elbow);
+                        DrawSphere(
+                            joint.Centre.X,
+                            joint.Centre.Y,
+                            joint.Centre.Z,
+                            PipeWorld.JointRadius);
                     }
                 }
 
@@ -128,7 +131,14 @@ namespace ThreeDPipesScreensaver
                     PipeCap cap = world.Caps[i];
                     if (cap.ColourIndex == colour)
                     {
-                        DrawRoundedCap(cap);
+                        DrawHemisphere(
+                            cap.Position.X,
+                            cap.Position.Y,
+                            cap.Position.Z,
+                            cap.OutwardDirection.X,
+                            cap.OutwardDirection.Y,
+                            cap.OutwardDirection.Z,
+                            PipeWorld.PipeRadius);
                     }
                 }
 
@@ -204,7 +214,6 @@ namespace ThreeDPipesScreensaver
             Gl.glLightfv(GL_LIGHT0, GL_AMBIENT, Light0Ambient);
             Gl.glLightfv(GL_LIGHT0, GL_DIFFUSE, Light0Diffuse);
             Gl.glLightfv(GL_LIGHT0, GL_SPECULAR, Light0Specular);
-
             Gl.glLightfv(GL_LIGHT1, GL_POSITION, Light1Position);
             Gl.glLightfv(GL_LIGHT1, GL_AMBIENT, Light1Ambient);
             Gl.glLightfv(GL_LIGHT1, GL_DIFFUSE, Light1Diffuse);
@@ -240,36 +249,33 @@ namespace ThreeDPipesScreensaver
 
         private static void DrawSegment(PipeSegment segment)
         {
-            float dx = segment.End.X - segment.Start.X;
-            float dy = segment.End.Y - segment.Start.Y;
-            float dz = segment.End.Z - segment.Start.Z;
-
             DrawCylinder(
-                segment.Start.X + dx * segment.StartTrim / Math.Max(1.0f, Math.Abs(dx + dy + dz)),
-                segment.Start.Y + dy * segment.StartTrim / Math.Max(1.0f, Math.Abs(dx + dy + dz)),
-                segment.Start.Z + dz * segment.StartTrim / Math.Max(1.0f, Math.Abs(dx + dy + dz)),
-                segment.End.X - dx * segment.EndTrim / Math.Max(1.0f, Math.Abs(dx + dy + dz)),
-                segment.End.Y - dy * segment.EndTrim / Math.Max(1.0f, Math.Abs(dx + dy + dz)),
-                segment.End.Z - dz * segment.EndTrim / Math.Max(1.0f, Math.Abs(dx + dy + dz)),
+                segment.Start.X,
+                segment.Start.Y,
+                segment.Start.Z,
+                segment.End.X,
+                segment.End.Y,
+                segment.End.Z,
                 PipeWorld.PipeRadius);
         }
 
         private static void DrawRunner(PipeRunner runner)
         {
-            float visibleDistance = (float)Math.Max(
-                runner.PendingStartTrim,
-                Math.Min(runner.RunLength, runner.Progress));
-
-            float sx = runner.Position.X + runner.PendingDirection.X * runner.PendingStartTrim;
-            float sy = runner.Position.Y + runner.PendingDirection.Y * runner.PendingStartTrim;
-            float sz = runner.Position.Z + runner.PendingDirection.Z * runner.PendingStartTrim;
+            float visibleDistance = (float)Math.Min(runner.RunLength, runner.Progress);
             float ex = runner.Position.X + runner.PendingDirection.X * visibleDistance;
             float ey = runner.Position.Y + runner.PendingDirection.Y * visibleDistance;
             float ez = runner.Position.Z + runner.PendingDirection.Z * visibleDistance;
 
-            if (visibleDistance > runner.PendingStartTrim + 0.002f)
+            if (visibleDistance > 0.002f)
             {
-                DrawCylinder(sx, sy, sz, ex, ey, ez, PipeWorld.PipeRadius);
+                DrawCylinder(
+                    runner.Position.X,
+                    runner.Position.Y,
+                    runner.Position.Z,
+                    ex,
+                    ey,
+                    ez,
+                    PipeWorld.PipeRadius);
             }
 
             DrawHemisphere(
@@ -347,16 +353,39 @@ namespace ThreeDPipesScreensaver
             Gl.glEnd();
         }
 
-        private static void DrawRoundedCap(PipeCap cap)
+        private static void DrawSphere(float x, float y, float z, float radius)
         {
-            DrawHemisphere(
-                cap.Position.X,
-                cap.Position.Y,
-                cap.Position.Z,
-                cap.OutwardDirection.X,
-                cap.OutwardDirection.Y,
-                cap.OutwardDirection.Z,
-                PipeWorld.PipeRadius);
+            const int stacks = 12;
+            const int slices = 24;
+
+            Gl.glPushMatrix();
+            Gl.glTranslatef(x, y, z);
+
+            for (int stack = 0; stack < stacks; stack++)
+            {
+                double latitude0 = -Math.PI * 0.5 + stack * Math.PI / stacks;
+                double latitude1 = -Math.PI * 0.5 + (stack + 1) * Math.PI / stacks;
+                float z0 = (float)Math.Sin(latitude0);
+                float r0 = (float)Math.Cos(latitude0);
+                float z1 = (float)Math.Sin(latitude1);
+                float r1 = (float)Math.Cos(latitude1);
+
+                Gl.glBegin(GL_QUAD_STRIP);
+                for (int slice = 0; slice <= slices; slice++)
+                {
+                    double longitude = slice * Math.PI * 2.0 / slices;
+                    float cx = (float)Math.Cos(longitude);
+                    float cy = (float)Math.Sin(longitude);
+
+                    Gl.glNormal3f(cx * r0, cy * r0, z0);
+                    Gl.glVertex3f(cx * r0 * radius, cy * r0 * radius, z0 * radius);
+                    Gl.glNormal3f(cx * r1, cy * r1, z1);
+                    Gl.glVertex3f(cx * r1 * radius, cy * r1 * radius, z1 * radius);
+                }
+                Gl.glEnd();
+            }
+
+            Gl.glPopMatrix();
         }
 
         private static void DrawHemisphere(
@@ -392,92 +421,14 @@ namespace ThreeDPipesScreensaver
                     float cy = (float)Math.Sin(theta);
 
                     Gl.glNormal3f(cx * ring0, cy * ring0, z0);
-                    Gl.glVertex3f(
-                        cx * ring0 * radius,
-                        cy * ring0 * radius,
-                        z0 * radius);
-
+                    Gl.glVertex3f(cx * ring0 * radius, cy * ring0 * radius, z0 * radius);
                     Gl.glNormal3f(cx * ring1, cy * ring1, z1);
-                    Gl.glVertex3f(
-                        cx * ring1 * radius,
-                        cy * ring1 * radius,
-                        z1 * radius);
+                    Gl.glVertex3f(cx * ring1 * radius, cy * ring1 * radius, z1 * radius);
                 }
                 Gl.glEnd();
             }
 
             Gl.glPopMatrix();
-        }
-
-        private static void DrawElbow(PipeElbow elbow)
-        {
-            const int arcSteps = 14;
-            const int tubeSteps = 24;
-
-            Vector3 incoming = new Vector3(
-                elbow.Incoming.X,
-                elbow.Incoming.Y,
-                elbow.Incoming.Z);
-            Vector3 outgoing = new Vector3(
-                elbow.Outgoing.X,
-                elbow.Outgoing.Y,
-                elbow.Outgoing.Z);
-            Vector3 centre = new Vector3(
-                elbow.Centre.X,
-                elbow.Centre.Y,
-                elbow.Centre.Z);
-
-            Vector3 arcCentre = centre - incoming * PipeWorld.ElbowCentreRadius +
-                                outgoing * PipeWorld.ElbowCentreRadius;
-
-            for (int arc = 0; arc < arcSteps; arc++)
-            {
-                float theta0 = (float)(arc * Math.PI * 0.5 / arcSteps);
-                float theta1 = (float)((arc + 1) * Math.PI * 0.5 / arcSteps);
-
-                Gl.glBegin(GL_QUAD_STRIP);
-                for (int tube = 0; tube <= tubeSteps; tube++)
-                {
-                    float phi = (float)(tube * Math.PI * 2.0 / tubeSteps);
-                    EmitElbowVertex(
-                        arcCentre,
-                        incoming,
-                        outgoing,
-                        theta0,
-                        phi);
-                    EmitElbowVertex(
-                        arcCentre,
-                        incoming,
-                        outgoing,
-                        theta1,
-                        phi);
-                }
-                Gl.glEnd();
-            }
-        }
-
-        private static void EmitElbowVertex(
-            Vector3 arcCentre,
-            Vector3 incoming,
-            Vector3 outgoing,
-            float theta,
-            float phi)
-        {
-            float cosTheta = (float)Math.Cos(theta);
-            float sinTheta = (float)Math.Sin(theta);
-
-            Vector3 radial = outgoing * -cosTheta + incoming * sinTheta;
-            Vector3 tangent = outgoing * sinTheta + incoming * cosTheta;
-            Vector3 binormal = Vector3.Cross(tangent, radial).Normalized();
-            Vector3 centreLine = arcCentre + radial * PipeWorld.ElbowCentreRadius;
-
-            float cosPhi = (float)Math.Cos(phi);
-            float sinPhi = (float)Math.Sin(phi);
-            Vector3 normal = (radial * cosPhi + binormal * sinPhi).Normalized();
-            Vector3 vertex = centreLine + normal * PipeWorld.PipeRadius;
-
-            Gl.glNormal3f(normal.X, normal.Y, normal.Z);
-            Gl.glVertex3f(vertex.X, vertex.Y, vertex.Z);
         }
 
         private static void DrawDissolveOverlay(
@@ -509,8 +460,7 @@ namespace ThreeDPipesScreensaver
             {
                 for (int column = 0; column < columns; column++)
                 {
-                    float threshold = TileThreshold(column, row, seed);
-                    if (threshold > softenedProgress)
+                    if (TileThreshold(column, row, seed) > softenedProgress)
                     {
                         continue;
                     }
@@ -532,7 +482,6 @@ namespace ThreeDPipesScreensaver
             Gl.glMatrixMode(GL_PROJECTION);
             Gl.glPopMatrix();
             Gl.glMatrixMode(GL_MODELVIEW);
-
             Gl.glEnable(GL_DEPTH_TEST);
             Gl.glEnable(GL_LIGHTING);
         }
@@ -584,58 +533,6 @@ namespace ThreeDPipesScreensaver
         }
     }
 
-    internal struct Vector3
-    {
-        public Vector3(float x, float y, float z)
-        {
-            X = x;
-            Y = y;
-            Z = z;
-        }
-
-        public readonly float X;
-        public readonly float Y;
-        public readonly float Z;
-
-        public float Length
-        {
-            get { return (float)Math.Sqrt(X * X + Y * Y + Z * Z); }
-        }
-
-        public Vector3 Normalized()
-        {
-            float length = Length;
-            if (length <= 0.000001f)
-            {
-                return new Vector3(0.0f, 0.0f, 0.0f);
-            }
-            return new Vector3(X / length, Y / length, Z / length);
-        }
-
-        public static Vector3 Cross(Vector3 a, Vector3 b)
-        {
-            return new Vector3(
-                a.Y * b.Z - a.Z * b.Y,
-                a.Z * b.X - a.X * b.Z,
-                a.X * b.Y - a.Y * b.X);
-        }
-
-        public static Vector3 operator +(Vector3 a, Vector3 b)
-        {
-            return new Vector3(a.X + b.X, a.Y + b.Y, a.Z + b.Z);
-        }
-
-        public static Vector3 operator -(Vector3 a, Vector3 b)
-        {
-            return new Vector3(a.X - b.X, a.Y - b.Y, a.Z - b.Z);
-        }
-
-        public static Vector3 operator *(Vector3 value, float scalar)
-        {
-            return new Vector3(value.X * scalar, value.Y * scalar, value.Z * scalar);
-        }
-    }
-
     internal static class Gl
     {
         public const uint PFD_DOUBLEBUFFER = 0x00000001;
@@ -677,140 +574,73 @@ namespace ThreeDPipesScreensaver
 
         [DllImport("user32.dll")]
         public static extern IntPtr GetDC(IntPtr window);
-
         [DllImport("user32.dll")]
         public static extern int ReleaseDC(IntPtr window, IntPtr deviceContext);
-
         [DllImport("gdi32.dll")]
-        public static extern int ChoosePixelFormat(
-            IntPtr deviceContext,
-            ref PIXELFORMATDESCRIPTOR descriptor);
-
+        public static extern int ChoosePixelFormat(IntPtr deviceContext, ref PIXELFORMATDESCRIPTOR descriptor);
         [DllImport("gdi32.dll")]
         [return: MarshalAs(UnmanagedType.Bool)]
-        public static extern bool SetPixelFormat(
-            IntPtr deviceContext,
-            int format,
-            ref PIXELFORMATDESCRIPTOR descriptor);
-
+        public static extern bool SetPixelFormat(IntPtr deviceContext, int format, ref PIXELFORMATDESCRIPTOR descriptor);
         [DllImport("gdi32.dll")]
         [return: MarshalAs(UnmanagedType.Bool)]
         public static extern bool SwapBuffers(IntPtr deviceContext);
-
         [DllImport("opengl32.dll")]
         public static extern IntPtr wglCreateContext(IntPtr deviceContext);
-
         [DllImport("opengl32.dll")]
         [return: MarshalAs(UnmanagedType.Bool)]
         public static extern bool wglDeleteContext(IntPtr renderingContext);
-
         [DllImport("opengl32.dll")]
         [return: MarshalAs(UnmanagedType.Bool)]
-        public static extern bool wglMakeCurrent(
-            IntPtr deviceContext,
-            IntPtr renderingContext);
-
+        public static extern bool wglMakeCurrent(IntPtr deviceContext, IntPtr renderingContext);
         [DllImport("opengl32.dll")]
         public static extern void glClearColor(float red, float green, float blue, float alpha);
-
         [DllImport("opengl32.dll")]
         public static extern void glClearDepth(double depth);
-
         [DllImport("opengl32.dll")]
         public static extern void glClear(uint mask);
-
         [DllImport("opengl32.dll")]
         public static extern void glEnable(uint capability);
-
         [DllImport("opengl32.dll")]
         public static extern void glDisable(uint capability);
-
         [DllImport("opengl32.dll")]
         public static extern void glDepthFunc(uint function);
-
         [DllImport("opengl32.dll")]
         public static extern void glShadeModel(uint mode);
-
         [DllImport("opengl32.dll")]
         public static extern void glViewport(int x, int y, int width, int height);
-
         [DllImport("opengl32.dll")]
         public static extern void glMatrixMode(uint mode);
-
         [DllImport("opengl32.dll")]
         public static extern void glLoadIdentity();
-
         [DllImport("opengl32.dll")]
         public static extern void glRotatef(float angle, float x, float y, float z);
-
         [DllImport("opengl32.dll")]
         public static extern void glTranslatef(float x, float y, float z);
-
         [DllImport("opengl32.dll")]
         public static extern void glPushMatrix();
-
         [DllImport("opengl32.dll")]
         public static extern void glPopMatrix();
-
         [DllImport("opengl32.dll")]
         public static extern void glBegin(uint mode);
-
         [DllImport("opengl32.dll")]
         public static extern void glEnd();
-
         [DllImport("opengl32.dll")]
         public static extern void glNormal3f(float x, float y, float z);
-
         [DllImport("opengl32.dll")]
         public static extern void glVertex3f(float x, float y, float z);
-
+        [DllImport("opengl32.dll")]
+        public static extern void glMaterialfv(uint face, uint parameterName, float[] parameters);
+        [DllImport("opengl32.dll")]
+        public static extern void glMaterialf(uint face, uint parameterName, float parameter);
+        [DllImport("opengl32.dll")]
+        public static extern void glLightfv(uint light, uint parameterName, float[] parameters);
         [DllImport("opengl32.dll")]
         public static extern void glColor3f(float red, float green, float blue);
-
         [DllImport("opengl32.dll")]
-        public static extern void glMaterialfv(
-            uint face,
-            uint parameterName,
-            float[] parameters);
-
-        [DllImport("opengl32.dll")]
-        public static extern void glMaterialf(
-            uint face,
-            uint parameterName,
-            float parameter);
-
-        [DllImport("opengl32.dll")]
-        public static extern void glLightfv(
-            uint light,
-            uint parameterName,
-            float[] parameters);
-
-        [DllImport("opengl32.dll")]
-        public static extern void glOrtho(
-            double left,
-            double right,
-            double bottom,
-            double top,
-            double nearPlane,
-            double farPlane);
-
+        public static extern void glOrtho(double left, double right, double bottom, double top, double nearPlane, double farPlane);
         [DllImport("glu32.dll")]
-        public static extern void gluPerspective(
-            double fieldOfViewY,
-            double aspect,
-            double nearPlane,
-            double farPlane);
-
+        public static extern void gluPerspective(double fieldOfViewY, double aspect, double nearPlane, double farPlane);
         [DllImport("glu32.dll")]
-        public static extern void gluLookAt(
-            double eyeX,
-            double eyeY,
-            double eyeZ,
-            double centreX,
-            double centreY,
-            double centreZ,
-            double upX,
-            double upY,
-            double upZ);
+        public static extern void gluLookAt(double eyeX, double eyeY, double eyeZ, double centreX, double centreY, double centreZ, double upX, double upY, double upZ);
     }
 }
